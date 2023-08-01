@@ -2,13 +2,14 @@
   "short_name": "React App",
   "name": "Create React App Sample",
   "manifest_version": 3,
+  "version": "1.0.1",
   "background": {
     "service_worker": "static/js/background.js"
   },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["static/js.content.js"],
+      "js": ["static/js/content.js"],
       "run_at": "document_end"
     }
   ],
@@ -33,11 +34,5 @@
       "128": "/image/app.png"
     },
     "default_title": "React CRX 2023"
-  },
-  " icon": {
-    "16": "/image/app.png",
-    "32": "/image/app.png",
-    "48": "/image/app.png",
-    "128": "/image/app.png"
   }
 }
