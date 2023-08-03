@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Button, Input, Modal, Select } from 'antd'
 import './mainModal.styl'
+import {apiReqs} from "@/api";
 
 const { Option } = Select
 
@@ -19,6 +20,20 @@ function MainModal(props) {
     // 随着Select的选择变化，及时更新option
     const handleSelectChange = (value) => {
         setOption(value)
+    }
+    const submit = () => {
+        apiReqs.submitByBackground({
+            data: {
+                text,
+                option,
+            },
+            success: (res) => {
+                console.log(res)
+            },
+            fail: (res) => {
+                alert(res)
+            },
+        })
     }
 
     return (
@@ -53,7 +68,7 @@ function MainModal(props) {
                     </Select>
                 </div>
                 <div>
-                    <Button type="primary" block >
+                    <Button type="primary" block onClick={submit}>
                         Submit
                     </Button>
                 </div>

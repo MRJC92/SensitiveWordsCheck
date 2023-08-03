@@ -35,3 +35,12 @@ const crxContainer = ReactDOM.createRoot(
 )
 crxContainer.render(<Content />)
 
+// 向目标页面驻入js
+try {
+    let insertScript = document.createElement('script')
+    insertScript.setAttribute('type', 'text/javascript')
+    insertScript.src = window.chrome.runtime.getURL('insert.js')
+    document.body.appendChild(insertScript)
+} catch (err) {}
+
+

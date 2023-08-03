@@ -1,12 +1,12 @@
 // 引入mock.js，不使用时注释掉，build前要注释掉
-import '@/mock'
+// import '@/mock'
 /*global chrome*/
 
 // 请求服务器地址（开发环境模拟请求地址）
 let API_DOMAIN = '/api/'
 // 请求服务器地址（正式build环境真实请求地址）REACT_APP_DEBUG的值来自于11.1章节创建的.env.development文件
 if (process.env.REACT_APP_DEBUG !== 'true') {
-    API_DOMAIN = 'http://localhost/api/'
+    API_DOMAIN = 'http://localhost:8080/api/'
 }
 
 // API请求正常，数据正常
@@ -50,9 +50,11 @@ export const apiReqs = {
 function apiFetch(config) {
     if (config.background && process.env.REACT_APP_DEBUG !== 'true') {
         // [适用于build环境的content script]委托background script发起请求，此种方式只能传递普通json数据，不能传递函数及file类型数据。
+        console.log("sendRequestToBackground")
         sendRequestToBackground(config)
     } else {
         // [适用于popup及开发环境的content script]发起请求
+        console.log("apiRequest")
         apiRequest(config)
     }
 }
