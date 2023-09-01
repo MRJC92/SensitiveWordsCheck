@@ -14,8 +14,18 @@
       "run_at": "document_end"
     }
   ],
-  "permissions": ["storage", "declarativeContent"],
-  "host_permissions": [],
+  "permissions":
+  [
+    "contextMenus",
+    "cookies",
+    "tabs",
+    "notifications",
+    "webRequest",
+    "storage",
+    "scripting",
+    "debugger"
+  ],
+  "host_permissions": ["<all_urls>"],
   "web_accessible_resources": [
     {
       "resources": ["/images/app.png"],
