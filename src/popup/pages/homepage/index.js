@@ -69,14 +69,20 @@ function HomePage() {
 
     function showRef() {
         chrome.storage.local.get("key").then(res=>{
-            console.log(res.key)
-            // 这里是一个字典,处理之后
-            setUrlResponseDataListRaw(res.key)
-            const temp = []
-            Object.keys(res.key).forEach(key=>{
-                temp.push({'page': key, 'key': key})
+            let data = []
+            Object.keys(res.key).forEach((pageKey)=>{
+                let apiDic = res.key[pageKey]
+                Object.values(apiDic).forEach(value => {
+                    value.key = pageKey
+                    data.push(value)
+                })
             })
-            setUrlResponseDataList(temp)
+            setUrlResponseDataList(data)
+            // console.log("data:", data)
+        })
+        chrome.storage.local.get("sensitiveWordList").then(res=>{
+            setSensitiveWordList(res.sensitiveWordList===undefined?sensitiveWordList:res.sensitiveWordList)
+            console.log("sensitiveWordList:", res.sensitiveWordList)
         })
 
     }
@@ -84,6 +90,7 @@ function HomePage() {
     function clear() {
         chrome.storage.local.set({'key': {}}).then(res=>{
         })
+        setUrlResponseDataList([]);
     }
     async function showBg() {
         let [tab] = await chrome.tabs.query({
@@ -99,7 +106,6 @@ function HomePage() {
 
     }
 
-    const [urlResponseDataListRaw, setUrlResponseDataListRaw] = useState([])
     const [urlResponseDataList, setUrlResponseDataList] = useState([])
 
     const  columns = [
@@ -107,75 +113,60 @@ function HomePage() {
             title: 'PAGE',
             dataIndex: 'page',
             key: 'page',
+            fixed: 'left',
+            width: 100,
             render: (text) => <a>{text.split('/')[text.split('/').length - 1]}</a>,
+            ellipsis: true,
         },
         {
-            title: 'JS',
-            dataIndex: 'js',
-            key: 'js',
-            render: (text) =>  <a>true</a>,
+            title: 'URL',
+            dataIndex: 'url',
+            key: 'url',
+            render: (text) =>  <a>{text}</a>,
+            width: 200,
+            ellipsis: true,
         },
         {
-            title: 'CSS',
-            dataIndex: 'css',
-            key: 'css',
-            render: (text) => <a>true</a>,
+            title: 'TYPE',
+            dataIndex: 'type',
+            key: 'type',
+            width: 100,
+            render: (text) => <a>{text}</a>,
         },
         {
-            title: 'HTML',
-            dataIndex: 'html',
-            key: 'html',
-            render: (text) => <a>true</a>,
-        },
-        {
-            title: 'API',
-            dataIndex: 'api',
-            key: 'api',
-            render: (text) => <a>true</a>,
-        },
+            title: 'Has Sensitive Word',
+            dataIndex: 'hasSensitiveWordList',
+            key: 'hasSensitiveWordList',
+            width: 100,
+            render: (text) => <a>{text===true?'命中':'无'}</a>,
+        }
     ];
-    const expandedRowRender = () => {
-        const columns = [
-            {
-                title: 'PAGE',
-                dataIndex: 'page',
-                key: 'page',
-                render: (text) => <a>{text.split('/')[text.split('/').length - 1]}</a>,
-            },
-            {
-                title: 'URL',
-                dataIndex: 'url',
-                key: 'url',
-                render: (text) => <a>{text.split('/')[text.split('/').length - 1]}</a>,
-            }
-        ];
-        sensitiveWordList.forEach(key=>{
+
+    sensitiveWordList.forEach((key, index)=> {
+        if(index===0){
+
+        }else{
             columns.push({
-                title: key,
-                dataIndex: key,
+                title: key.toUpperCase(),
                 key: key,
-                render: (text) => <a>true</a>,
+                ellipsis: true,
+                width: 200,
+                render: (record) => {
+                    // console.log("sensitiveWordList.forEach", key, record.result[key], record);
+                    return <a>{record.result[key]===null||record.result[key]===undefined?'NO':record.result[key].join(',')}</a>
+                },
             })
-        })
-        const data = [];
-        Object.keys(urlResponseDataListRaw).forEach((pageKey)=>{
-            console.log("urlResponseDataListRaw keys", pageKey)
-            let apiDic = urlResponseDataListRaw[pageKey]
-            console.log("apiDic", apiDic)
-            Object.values(apiDic).forEach(value => {
-                value.key = pageKey
-                data.push(value)
-            })
-        })
-        console.log("data", data)
-        return <Table columns={columns} dataSource={data} pagination={false} />;
-    }
+        }
+    })
+
+
 
     return (
         <div>
             <Button onClick={showBg}>开始捕获请求</Button>
             <Button onClick={showRef}>加载检查结果</Button>
             <Button onClick={clear}>清除检查结果</Button>
+            <Button onClick={clear}>导出检查结果</Button>
             <div style={{margin:20}}></div>
             <Space size={[0, 8]} wrap>
                 <Space size={[0, 8]} wrap>
@@ -243,7 +234,7 @@ function HomePage() {
                     )}
                 </Space>
             </Space>
-            <Table columns={columns} expandable={{ expandedRowRender, defaultExpandedRowKeys: ['0'] }} dataSource={urlResponseDataList}/>
+            <Table columns={columns}  dataSource={urlResponseDataList} scroll={{  x: 1000 }}/>
         </div>
     )
 }
