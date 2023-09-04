@@ -1,58 +1,21 @@
 import {apiRequest} from "@/api";
 import iconPng from '@/content/images/icon.png'
-import {datetime} from "mockjs/src/mock/random/date";
-//
-// chrome.webNavigation.onBeforeNavigate.addListener((details) => {
-//     // console.log(details)
-//     if(details.frameType==="outermost_frame"){
-//         chrome.notifications.create({
-//             type: 'basic',
-//             iconUrl: iconPng,
-//             title: 'page loaded',
-//             message:
-//                 'Completed loading: ' +
-//                 details.url +
-//                 ' at ' +
-//                 details.timeStamp +
-//                 ' milliseconds since the epoch.'
-//         });
-//     }
-// });
+import {getNestedValue, setNestedValue} from "@/utils/nestedValueHelper";
+import {type} from "@testing-library/user-event/dist/type";
+import {bool} from "mockjs/src/mock/random/basic";
 
-
-// chrome.declarativeNetRequest.onRuleMatchedDebug.addListener((e) => {
-//     // const msg = `Cookies removed in request to ${e.request.url} on tab ${e.request.tabId}.`;
-//     // console.log(msg);
-//     // console.log(e)
-// });
-
-// chrome.action.onClicked.addListener(function (tab) {
-//     if (tab.url.startsWith('http')) {
-//         chrome.debugger.attach({ tabId: tab.id }, '1.2', function () {
-//             chrome.debugger.sendCommand(
-//                 { tabId: tab.id },
-//                 'Network.enable',
-//                 {},
-//                 function () {
-//                     if (chrome.runtime.lastError) {
-//                         console.error(chrome.runtime.lastError);
-//                     }
-//                 }
-//             );
-//         });
-//     } else {
-//         console.log('Debugger can only be attached to HTTP/HTTPS pages.');
-//     }
-// });
-
+let pendingRequests = {};
+let sensitiveWordList = [];
+let oldSensitiveWordList = [];
+let checkTypes = ['xhr', 'fetch', 'stylesheet', 'document', 'script'];
+let currentPageUrl = 'https://www.upish.com/en/trade/btc_usdt';
+let splitChar = '~.~';
 chrome.runtime.onMessage.addListener((request , sender , sendResponse) => {
     console.log("service-worker add listener")
     const { action, tab } = request;
     if(action==="start"){
-        // // 由于popup的生命周期问题,这里就通过创建新tab的方式来和service进行数据交互
-        // chrome.tabs.create({ index: 0, active: false, url: "https://qcenter.k8s.qa1fdg.net/cloud#/cloud/welcome/document" });
-        //
         if (tab.url.startsWith('http')) {
+            currentPageUrl = tab.url;
             chrome.debugger.attach({ tabId: tab.id }, '1.2', function () {
                 chrome.debugger.sendCommand(
                     { tabId: tab.id },
@@ -60,7 +23,7 @@ chrome.runtime.onMessage.addListener((request , sender , sendResponse) => {
                     {},
                     function () {
                         if (chrome.runtime.lastError) {
-                            console.error(chrome.runtime.lastError);
+                            console.log(chrome.runtime.lastError);
                         }
                     }
                 );
@@ -68,66 +31,112 @@ chrome.runtime.onMessage.addListener((request , sender , sendResponse) => {
         } else {
             console.log('Debugger can only be attached to HTTP/HTTPS pages.');
         }
+    }else if(action === "modifySensitiveWordList") {
+        oldSensitiveWordList = sensitiveWordList;
+        sensitiveWordList = request.sensitiveWordList;
+        chrome.storage.local.set({"sensitiveWordList": sensitiveWordList}).then(res=>console.log("set sensitiveWordList :" , res))
     }
     sendResponse("content got!")
 })
 
-// chrome.runtime.onConnect.addListener(function(port) {
-//     console.assert(port.name === "knockknock");
-//     port.onMessage.addListener(function(msg) {
-//         console.log("service:")
-//         console.log(msg)
-//         if (msg.joke === "Knock knock")
-//             port.postMessage({question: "Who's there?"});
-//         else if (msg.answer === "Madame")
-//             port.postMessage({question: "Madame who?"});
-//         else if (msg.answer === "Madame... Bovary")
-//             port.postMessage({question: "I don't get it."});
-//     });
-// });
-
-
-chrome.debugger.onEvent.addListener(function (source, method, params) {
+chrome.debugger.onEvent.addListener(async function (source, method, params) {
     if (method === 'Network.responseReceived') {
-        // console.log(source);
-        // console.log('Response received:', params.response);
-        if (params.response.url.startsWith('https://www.upish.com/bapi/')) {
-            // console.log('Response received:', params.response);
-            // console.log(params.response.toString());
-            chrome.debugger.sendCommand(
-                { tabId: source.tabId },
-                'Network.getResponseBody',
-                {"requestId": params.requestId},
-                function (response) {
-                    if(response===undefined){
-
-                    }else{
-                        if(response.hasOwnProperty("code")){
-                            console.log("code:" + response.code)
-                        }else{
-                            console.log("body:" + response.body)
-                            chrome.runtime.sendMessage({"url": params.response.url, "reponseBody": response.body}, (response) => {
-                                // console.log("service发送response成功")
-                                // console.log(response)
-                            });
-
-                            // 保存到storage中
-                            chrome.storage.local.get(["key"]).then((result) => {
-                                let newValue = []
-                                if(result.key===undefined || result.key.length===0){
-
-                                }else{
-                                    newValue = result.key
-                                }
-                                newValue.push({"url": params.response.url, "reponseBody": response.body})
-                                chrome.storage.local.set({"key": newValue}).then(()=>{})
-                            });
-
-                        }
-                    }
-                }
-            );
+        // console.log('Network.responseReceived', source, method, params)
+        if (checkTypes.includes(params.type.toLowerCase())) {
+            pendingRequests[params.requestId] = { status: true, type: params.type, url: params.response.url };
         }
-        // Perform your desired action with the response data
+    } else if (
+        method === 'Network.loadingFinished' &&
+        pendingRequests[params.requestId] !== undefined
+    ) {
+        // console.log('Network.loadingFinished', source, method, params);
+        getResponseBody(
+            source.tabId,
+            params.requestId,
+            pendingRequests[params.requestId]
+        );
+        delete pendingRequests[params.requestId];
     }
 });
+
+function getResponseBody(tabId, requestId, requestInfo) {
+    chrome.debugger.sendCommand(
+        { tabId: tabId },
+        'Network.getResponseBody',
+        { requestId: requestId },
+        function (response) {
+            // console.log(requestInfo.type + ' response', response.body);
+
+            // 首先检查是否已经检查过当前的response
+            let requestUrl = requestInfo.url;
+            let newKeyValue = {}
+            let checkResult = {};
+            let isExits = false;
+            // 感觉这个处理有点问题,这里用chrome tabAPI来获取当前tab的url
+            chrome.storage.local.get(["key"]).then(result => {
+                isExits = getNestedValue(result.key, currentPageUrl+splitChar+requestUrl)
+                console.log("isExits:", isExits)
+                if(isExits && oldSensitiveWordList === sensitiveWordList){
+                    console.log("requestUrl:", requestUrl, "type:", requestInfo.type, "already has return")
+                    return;
+                }else{
+                    console.log("result.key:", result.key)
+                    newKeyValue = result.key == undefined ? newKeyValue: result.key;
+                }
+            })
+            console.log("newKeyValue start:", newKeyValue)
+            if(isExits){
+                return;
+            }
+
+            // 进行敏感词的校验
+            let checkResponse = check(response.body, sensitiveWordList);
+            if (checkResponse === undefined) {
+                //  标记处理过了,并且没有敏感词
+                checkResult = {
+                    "hasSensitiveWordList": false,
+                    "result": {}
+                }
+            } else {
+                checkResult = {
+                    "hasSensitiveWordList": true,
+                    "result": checkResponse
+                }
+            }
+            checkResult["page"] = currentPageUrl;
+            checkResult["url"] = requestUrl;
+            checkResult["type"] = requestInfo.type;
+            // 保存到storage中
+            setNestedValue(newKeyValue, currentPageUrl+splitChar+requestUrl, checkResult, splitChar);
+            console.log("setNestedValue:", newKeyValue)
+            chrome.storage.local.set({"key": newKeyValue}).then(() => {
+                console.log(newKeyValue, "设置成功")
+            })
+        }
+    );
+}
+
+/**
+ * 正则表达式来匹配敏感词
+ * @param content
+ * @param wordList
+ */
+function check (content, wordList) {
+    console.log(content)
+    const matchResult = {}
+    wordList.forEach((word, index) => {
+        console.log("word:" , word)
+        let searchTerm = word ;
+        let regex = new RegExp(".{0,5}" + searchTerm + ".{0,5}", "g");
+        let matches = content.match(regex);
+        matchResult[word] =  matches;
+    })
+    return matchResult;
+}
+
+async function getCurrentTab() {
+    let queryOptions = { active: true, lastFocusedWindow: true };
+    // `tab` will either be a `tabs.Tab` instance or `undefined`.
+    let [tab] = await chrome.tabs.query(queryOptions);
+    return tab;
+}
