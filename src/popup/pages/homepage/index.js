@@ -2,7 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { PlusOutlined } from '@ant-design/icons';
 import { Space, Input, Tag, Tooltip, theme, Button, Table } from 'antd';
 import {sendSensitiveWordListMessage} from "@/utils/message";
-
+import 'regenerator-runtime/runtime';
+import * as ExcelJs from 'exceljs';
+// import ExcelJS from 'exceljs/dist/exceljs.min';
+import {generateHeaders, saveWorkbook} from "@/utils/excel";
+import {matches} from "@testing-library/jest-dom/dist/utils";
 function HomePage() {
     const { token } = theme.useToken();
     const [sensitiveWordList, setSensitiveWordList] = useState(['示例:binance']);
@@ -149,24 +153,40 @@ function HomePage() {
             columns.push({
                 title: key.toUpperCase(),
                 key: key,
+                dataIndex: key,
                 ellipsis: true,
                 width: 200,
                 render: (record) => {
-                    // console.log("sensitiveWordList.forEach", key, record.result[key], record);
-                    return <a>{record.result[key]===null||record.result[key]===undefined?'NO':record.result[key].join(',')}</a>
+                    return <a>{record===undefined?'':record.join(',')}</a>
                 },
             })
         }
     })
 
-
+    function onExportBasicExcel() {
+        if(urlResponseDataList.length===0){
+            return
+        }
+        // 创建工作簿
+        const workbook = new ExcelJs.Workbook();
+        // 添加sheet
+        const worksheet = workbook.addWorksheet('demo sheet');
+        // 设置 sheet 的默认行高
+        worksheet.properties.defaultRowHeight = 20;
+        // 设置列
+        worksheet.columns = generateHeaders(columns);
+        // 添加行
+        worksheet.addRows(urlResponseDataList);
+        // 导出excel
+        saveWorkbook(workbook, 'simple-demo.xlsx');
+    }
 
     return (
         <div>
             <Button onClick={showBg}>开始捕获请求</Button>
             <Button onClick={showRef}>加载检查结果</Button>
             <Button onClick={clear}>清除检查结果</Button>
-            <Button onClick={clear}>导出检查结果</Button>
+            <Button onClick={onExportBasicExcel}>导出检查结果</Button>
             <div style={{margin:20}}></div>
             <Space size={[0, 8]} wrap>
                 <Space size={[0, 8]} wrap>
