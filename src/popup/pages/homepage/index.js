@@ -1,13 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom'
 import { PlusOutlined } from '@ant-design/icons';
 import { Space, Input, Tag, Tooltip, theme, Button, Table } from 'antd';
 import {sendSensitiveWordListMessage} from "@/utils/message";
-import 'regenerator-runtime/runtime';
-import * as ExcelJs from 'exceljs';
+
 // import ExcelJS from 'exceljs/dist/exceljs.min';
-import {generateHeaders, saveWorkbook} from "@/utils/excel";
+import {onExportBasicExcel} from "@/utils/excel";
 import {matches} from "@testing-library/jest-dom/dist/utils";
+
 function HomePage() {
+    // 路由跳转钩子
+    const now = new Date();
+    const navigate = useNavigate()
     const { token } = theme.useToken();
     const [sensitiveWordList, setSensitiveWordList] = useState(['示例:binance']);
     const [inputVisible, setInputVisible] = useState(false);
@@ -110,6 +114,7 @@ function HomePage() {
 
     }
 
+
     const [urlResponseDataList, setUrlResponseDataList] = useState([])
 
     const  columns = [
@@ -163,30 +168,32 @@ function HomePage() {
         }
     })
 
-    function onExportBasicExcel() {
-        if(urlResponseDataList.length===0){
-            return
+
+
+    async function CheckNewTabStatus(event) {
+        const tabs = await chrome.tabs.query({title: "Sensitive Word Check"})
+
+        // 如果tab存在，则直接Focus到这个tab
+        if(tabs.length!=0){
+            chrome.tabs.update(tabs[0].id, {active: true})
+        }else{
+            // 使用window.open打开新的标签页
+            var extensionId = chrome.runtime.id;
+            const newTab = window.open(`chrome-extension://${extensionId}/index.html#/check`, '_blank');
+            // 确保新的标签页在前台打开
+            if (newTab) newTab.focus();
+            
         }
-        // 创建工作簿
-        const workbook = new ExcelJs.Workbook();
-        // 添加sheet
-        const worksheet = workbook.addWorksheet('demo sheet');
-        // 设置 sheet 的默认行高
-        worksheet.properties.defaultRowHeight = 20;
-        // 设置列
-        worksheet.columns = generateHeaders(columns);
-        // 添加行
-        worksheet.addRows(urlResponseDataList);
-        // 导出excel
-        saveWorkbook(workbook, 'simple-demo.xlsx');
+    
     }
 
     return (
         <div>
+            <Button onClick={CheckNewTabStatus}>Active New Page</Button>
             <Button onClick={showBg}>Start Catch</Button>
             <Button onClick={showRef}>Load Result</Button>
             <Button onClick={clear}>Clear Result</Button>
-            <Button onClick={onExportBasicExcel}>Export Result</Button>
+            <Button onClick={() => onExportBasicExcel("checkResult" +now.toLocaleString()+".xlsx",columns, urlResponseDataList)}>Export Result</Button>
             <div style={{margin:20}}></div>
             <Space size={[0, 8]} wrap>
                 <Space size={[0, 8]} wrap>
