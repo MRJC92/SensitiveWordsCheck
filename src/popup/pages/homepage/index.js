@@ -183,10 +183,10 @@ function HomePage() {
 
     return (
         <div>
-            <Button onClick={showBg}>开始捕获请求</Button>
-            <Button onClick={showRef}>加载检查结果</Button>
-            <Button onClick={clear}>清除检查结果</Button>
-            <Button onClick={onExportBasicExcel}>导出检查结果</Button>
+            <Button onClick={showBg}>Start Catch</Button>
+            <Button onClick={showRef}>Load Result</Button>
+            <Button onClick={clear}>Clear Result</Button>
+            <Button onClick={onExportBasicExcel}>Export Result</Button>
             <div style={{margin:20}}></div>
             <Space size={[0, 8]} wrap>
                 <Space size={[0, 8]} wrap>
@@ -249,7 +249,7 @@ function HomePage() {
                         />
                     ) : (
                         <Tag style={tagPlusStyle} onClick={showInput}>
-                            <PlusOutlined /> 增加敏感词
+                            <PlusOutlined /> add sensitive word
                         </Tag>
                     )}
                 </Space>

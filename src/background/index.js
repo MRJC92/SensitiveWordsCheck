@@ -110,27 +110,31 @@ function getResponseBody(tabId, requestId, requestInfo) {
                 "hasSensitiveWordList": checkResponse[1],
                 "result": checkResponse[0]
             }
-            checkResult["page"] = currentPageUrl;
-            checkResult["url"] = requestUrl;
-            checkResult["type"] = requestInfo.type;
-            // 把结果铺平,这样前端好显示和导出excel, 忽略第一个敏感词
-            for (let i = 1; i < sensitiveWordList.length; i++) {
-                let key = sensitiveWordList[i];
-                console.log("key:", key)
-                if (checkResponse[0]['flag'] === false) {
-                    console.log("设置checkResult[sensitiveWordList[i]] = ''")
-                    checkResult[key] = ''
-                } else {
-                    console.log("checkResult[sensitiveWordList[i]] = checkResponse[0]['matches']", checkResponse[0], checkResponse[0][key].matches)
-                    // 去重一下
-                    checkResult[key] = unique(checkResponse[0][key].matches)
+            if(checkResponse[1]===true){
+                checkResult["page"] = currentPageUrl;
+                checkResult["url"] = requestUrl;
+                checkResult["type"] = requestInfo.type;
+                // 把结果铺平,这样前端好显示和导出excel, 忽略第一个敏感词
+                for (let i = 1; i < sensitiveWordList.length; i++) {
+                    let key = sensitiveWordList[i];
+                    console.log("key:", key)
+                    if (checkResponse[0]['flag'] === false) {
+                        console.log("设置checkResult[sensitiveWordList[i]] = ''")
+                        checkResult[key] = ''
+                    } else {
+                        console.log("checkResult[sensitiveWordList[i]] = checkResponse[0]['matches']", checkResponse[0], checkResponse[0][key].matches)
+                        // 去重一下
+                        checkResult[key] = unique(checkResponse[0][key].matches)
+                    }
                 }
+                console.log("checkResult:", checkResult)
+                // 保存到storage中
+                setNestedValue(newKeyValue, currentPageUrl + splitChar + requestUrl, checkResult, splitChar);
+                console.log("setNestedValue:", newKeyValue)
+                await chrome.storage.local.set({"key": newKeyValue});
+            }else{
+                // 没有命中的就不添加到缓存中了
             }
-            console.log("checkResult:", checkResult)
-            // 保存到storage中
-            setNestedValue(newKeyValue, currentPageUrl + splitChar + requestUrl, checkResult, splitChar);
-            console.log("setNestedValue:", newKeyValue)
-            await chrome.storage.local.set({"key": newKeyValue});
         }
     );
 }

@@ -1,6 +1,6 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "Sensitive Word Check",
+  "name": "Sensitive Word Check",
   "manifest_version": 3,
   "version": "1.0.1",
   "background": {
@@ -28,7 +28,7 @@
   "host_permissions": ["<all_urls>"],
   "web_accessible_resources": [
     {
-      "resources": ["/images/app.png"],
+      "resources": ["/images/search.png"],
       "matches": ["<all_urls>"]
     },
     {
@@ -39,11 +39,11 @@
   "action": {
     "default_popup": "index.html",
     "default_icon": {
-      "16": "/image/app.png",
-      "32": "/image/app.png",
-      "48": "/image/app.png",
-      "128": "/image/app.png"
+      "16": "/image/search.png",
+      "32": "/image/search.png",
+      "48": "/image/search.png",
+      "128": "/image/search.png"
     },
-    "default_title": "React CRX 2023"
+    "default_title": "Sensitive Word Check"
   }
 }
