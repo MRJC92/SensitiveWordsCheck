@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { PlusOutlined } from '@ant-design/icons';
 import { TweenOneGroup } from 'rc-tween-one';
-import { Input, Tag, theme } from 'antd';
+import { Input, Tag, theme, Button } from 'antd';
 
 const WordConfig = (props) => {
   const { token } = theme.useToken();
-  const [tags, setTags] = useState(props.words);
+  // const [props.words, setTags] = useState(props.words);
   const [inputVisible, setInputVisible] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const inputRef = useRef(null);
@@ -15,8 +15,8 @@ const WordConfig = (props) => {
     }
   }, [inputVisible]);
   const handleClose = (removedTag) => {
-    const newTags = tags.filter((tag) => tag !== removedTag);
-    setTags(newTags);
+    const newTags = props.words.filter((tag) => tag !== removedTag);
+    // setTags(newTags);
     props.onTagsChange(newTags);
   };
   const showInput = () => {
@@ -26,9 +26,9 @@ const WordConfig = (props) => {
     setInputValue(e.target.value);
   };
   const handleInputConfirm = () => {
-    if (inputValue && tags.indexOf(inputValue) === -1) {
-      setTags([...tags, inputValue]);
-      props.onTagsChange([...tags, inputValue]);
+    if (inputValue && props.words.indexOf(inputValue) === -1) {
+      // setTags([...props.words, inputValue]);
+      props.onTagsChange([...props.words, inputValue]);
     }
     setInputVisible(false);
     setInputValue('');
@@ -56,7 +56,7 @@ const WordConfig = (props) => {
       </span>
     );
   };
-  const tagChild = tags.map(forMap);
+  const tagChild = props.words.map(forMap);
   const tagPlusStyle = {
     background: token.colorBgContainer,
     borderStyle: 'dashed',
@@ -105,9 +105,15 @@ const WordConfig = (props) => {
           onPressEnter={handleInputConfirm}
         />
       ) : (
-        <Tag onClick={showInput} style={tagPlusStyle}>
-          <PlusOutlined /> New Word
-        </Tag>
+        <div>        
+          <Tag onClick={showInput} style={tagPlusStyle}>
+            <PlusOutlined /> New Word
+          </Tag>
+          <Button onClick={props.refresh} size={'small'} style={tagPlusStyle}>
+             Refresh
+          </Button>
+        </div>
+
       )}
     </>
   );
