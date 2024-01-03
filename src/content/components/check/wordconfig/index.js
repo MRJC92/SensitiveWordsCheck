@@ -109,9 +109,9 @@ const WordConfig = (props) => {
           <Tag onClick={showInput} style={tagPlusStyle}>
             <PlusOutlined /> New Word
           </Tag>
-          <Button onClick={props.refresh} size={'small'} style={tagPlusStyle}>
+          {/* <Button onClick={props.refresh} size={'small'} style={tagPlusStyle}>
              Refresh
-          </Button>
+          </Button> */}
         </div>
 
       )}

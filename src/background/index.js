@@ -1,192 +1,505 @@
-import {apiRequest} from "@/api";
-import iconPng from '@/content/images/icon.png'
-import {getNestedValue, setNestedValue} from "@/utils/nestedValueHelper";
-import {type} from "@testing-library/user-event/dist/type";
-import {bool} from "mockjs/src/mock/random/basic";
+import { isValidUrl } from "@/utils/common";
 
+let timeout = 7000;
+let taskScreenShotFlag = false;
+let taskIgnoreUrl = [];
+let taskDuplicatePage = [];
+let lastUrlError = {};
+// 用来记录重定向的url关系
+let redirectUrlMap = {};
+// 用来记录task的host地址,用来判断深度
+let taskHost = "";
+// autoRunTab 表示的是新开的tab的id
+let autoRunTab = "";
+// 用来表示是否开启了自动扫描功能
+let autoRunFlag = false;
+let autoPort;
+// 用于记录总共的url
+let autoScanPaths = [];
+// 用来记录已经处理过的url
+let autoScanPathsDone = [];
+// 页面截图
+let pageScreenShot = {};
+// 用来存放分析结果
+let checkResult = {};
 let pendingRequests = {};
 let sensitiveWordList = [];
-let oldSensitiveWordList = [];
 let checkTypes = ['xhr', 'fetch', 'stylesheet', 'document', 'script'];
-let currentPageUrl = '';
-let splitChar = '~.~';
-// chrome.runtime.oninstall.addListener(async () => {
-//     // 加载敏感词
-//     await chrome.storage.local.get("sensitiveWordList").then(res => {
-//         oldSensitiveWordList = res.sensitiveWordList === undefined ? sensitiveWordList : res.sensitiveWordList
-//         console.log("sensitiveWordList:", res.sensitiveWordList)
-//     })
-// })
+// 中文注释检测
+let chineseAnnotationDetectionFlag = false;
+// 敏感词检测标志
+let sensitiveWordDetectionFlag = false;
+
+
 chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
-    console.log("service-worker add listener")
     const {action, tab} = request;
-    if (action === "start") {
-        if (tab.url.startsWith('http')) {
-            currentPageUrl = tab.url;
-            chrome.debugger.attach({tabId: tab.id}, '1.2', function () {
-                chrome.debugger.sendCommand(
-                    {tabId: tab.id},
-                    'Network.enable',
-                    {},
-                    function () {
-                        if (chrome.runtime.lastError) {
-                            console.log(chrome.runtime.lastError);
-                        }
-                    }
-                );
-            });
-        } else {
-            console.log('Debugger can only be attached to HTTP/HTTPS pages.');
-        }
-    } else if (action === "modifySensitiveWordList") {
-        console.log("modifySensitiveWordList:", request.sensitiveWordList)
+    if(autoRunFlag){
+        sendResponse({"error": "auto scan is running, please stop it first."})
+    }
+    if (action === "modifySensitiveWordList") {
         oldSensitiveWordList = sensitiveWordList;
         sensitiveWordList = request.sensitiveWordList;
-        let res = await chrome.storage.local.set({"sensitiveWordList": sensitiveWordList})
-        console.log("after change:", sensitiveWordList, request.sensitiveWordList)
+        await chrome.storage.local.set({"sensitiveWordList": sensitiveWordList})
 
     }
-    sendResponse("content got!")
+    // sendResponse("content got!")
 })
 
+// 添加Connect来接收和处理AutoScan的消息
+chrome.runtime.onConnect.addListener(function(port) {
+    autoPort = port;
+
+    port.onMessage.addListener(function(message) {
+        if(message.action === "startAuto"){
+            const { path, auto} = message;
+            const initStatus = initAutoRun(message);
+            if(initStatus===false){
+                return;
+            }
+
+            let startCheckListenerFlag = true;
+            let errorOccurred = false;
+            chrome.tabs.create({url: path}, function (tab) {
+                const listener = details => {
+                    if (details.tabId === tab.id && details.type === 'main_frame' && startCheckListenerFlag) {
+                        chrome.webRequest.onErrorOccurred.removeListener(listener);
+                        errorOccurred = true;
+                        console.log(details)
+                        port.postMessage({"error": "please check the url is correct."});
+                    }
+                };
+                chrome.webRequest.onErrorOccurred.addListener(listener, { urls: ['<all_urls>'] });
+                // 如果页面创建成功,则添加debugger
+                autoRunTab = tab.id;
+                const onUpdatedListener = (id, info, updatedTab) => {
+                    if (id === tab.id && info.status === 'complete' && !errorOccurred) {
+                        startCheckListenerFlag = false;
+                        chrome.tabs.onUpdated.removeListener(onUpdatedListener);
+                        // 如果没有发生onErrorOccurred事件，添加debugger
+                        chrome.debugger.attach({tabId: tab.id}, '1.2', function() {
+                            if (chrome.runtime.lastError) {
+                                port.postMessage({"error": chrome.runtime.lastError});
+                            } else {
+                                // Debugger attached, now do something with it
+                                chrome.debugger.sendCommand({tabId: tab.id}, 'Network.enable');
+                                // 1.刷新当前页,因为我们是在page完全load后才开始添加的debugger,所以这里刷新一下
+                                chrome.tabs.reload(tab.id, {bypassCache: true}, function () {
+                                    autoScanPaths.push(modifyUrl(path));
+                                    autoScanPaths = unique(autoScanPaths);
+                                });
+                                if(!autoRunFlag){
+                                    setTimeout(()=>{
+                                        autoPort.postMessage({"action": "finish"})
+                                        autoPort.postMessage({"action": "finalResult", "finalResult": checkResult});
+                                    },timeout);
+                                }
+                            }
+                        });
+                    }
+                };
+                chrome.tabs.onUpdated.addListener(onUpdatedListener);
+                // 发送消息告诉内容脚本开始扫描
+            });
+        }else if(message.action === "stopAuto"){
+            // 停止自动扫描, tabid是新打开的tabID
+            autoRunFlag = false;
+            console.log("stopAuto debugger detach")
+            // 因为可能手动停止,还需要在手工执行,所以就不detach
+            // chrome.debugger.detach({tabId: autoRunTab});
+            // 还需要将截图发送给content脚本,对应
+            autoPort.postMessage({"action": "finish", "pageUrls": pageUrls, "screenShot": pageScreenShot })
+            autoRunTab = "";
+            autoPort.postMessage({"action": "finalResult","finalResult": checkResult});
+        }else{
+            port.postMessage({"error": "unknown action"});
+        }
+    });
+});
+
 chrome.debugger.onEvent.addListener(async function (source, method, params) {
+    // console.log("chrome.debugger.onEvent.addListener(", source, method, params)
     if (method === 'Network.responseReceived') {
-        // console.log('Network.responseReceived', source, method, params)
         if (checkTypes.includes(params.type.toLowerCase())) {
             pendingRequests[params.requestId] = { status: true, type: params.type, url: params.response.url };
         }
+        // 这里可以已经处理过的url
     } else if (
         method === 'Network.loadingFinished' &&
         pendingRequests[params.requestId] !== undefined
     ) {
-        // console.log('Network.loadingFinished', source, method, params);
-         getResponseBody(
-            source.tabId,
-            params.requestId,
-            pendingRequests[params.requestId]
-        );
+        // 重复请求不在做处理
+        const index = pendingRequests[params.requestId].url + '_' + pendingRequests[params.requestId].type;
+        // console.log("checkResult:", checkResult)
+        if (checkResult[index] !== undefined) {
+            return;
+        }else{
+            // 检查loadingFinished的请求params.type是否是Document,如果是的话需要分析a标签,获取新的url
+            // 这里写成异步也没有成功只能在内部处理了
+            dealResponseBody(source.tabId,
+                params.requestId,
+                pendingRequests[params.requestId])
+        }
         delete pendingRequests[params.requestId];
+    }else{
+        // console.log("do nothing", source, method, params)
     }
 });
 
-function getResponseBody(tabId, requestId, requestInfo) {
-     chrome.debugger.sendCommand(
+// 只是用来获取response的body,不做任何处理
+async function  dealResponseBody(tabId, requestId, requestInfo) {
+    // 先获取response
+    chrome.debugger.sendCommand(
         {tabId: tabId},
         'Network.getResponseBody',
         {requestId: requestId},
         async function (response) {
-            // console.log(requestInfo.type + ' response', response.body);
-            let tab = await getCurrentTab();
-            currentPageUrl = tab.url;
-            if (currentPageUrl.startsWith("chrome://extensions")) {
-                return
+            if(response.body===undefined){
+                // Todo
+                console.log("dealResponseBody response.body is undefined", requestInfo)
             }
-            // 首先检查是否已经检查过当前的response
-            let requestUrl = requestInfo.url;
-            let newKeyValue = {}
-            let checkResult = {};
-            // let isExits = undefined;
-            // 感觉这个处理有点问题,这里用chrome tabAPI来获取当前tab的url
-            let result = await chrome.storage.local.get(["key"]);
-
-            // isExits = getNestedValue(result.key, currentPageUrl + splitChar + requestUrl)
-            // // console.log("isExits:", isExits)
-            // if (isExits !== undefined && oldSensitiveWordList === sensitiveWordList) {
-            //     console.log("requestUrl:", requestUrl, "type:", requestInfo.type, "already has return")
-            //     return;
-            // } else {
-            //     // console.log("result.key:", result.key)
-            //     newKeyValue = result.key === undefined ? {} : result.key;
-            // }
-
-            newKeyValue = result.key === undefined ? {} : result.key;
-
-            // console.log("newKeyValue start:", newKeyValue)
-
-            // 进行敏感词的校验
-            let checkResponse = check(response.body, sensitiveWordList);
-            console.log("checkResponse, finalFlag", checkResponse)
-            checkResult = {
-                "hasSensitiveWordList": checkResponse[1],
-                "result": checkResponse[0]
+            const body = response.body;
+            // 这里可以通过传入的requestInfo来判断是否是document,如果是的话,就需要分析a标签,获取新的url
+            if(autoRunFlag && requestInfo.type == "document"){
+                parseLink(body);
             }
-            if(checkResponse[1]===true){
-                checkResult["page"] = currentPageUrl;
-                checkResult["url"] = requestUrl;
-                checkResult["type"] = requestInfo.type;
-                // 把结果铺平,这样前端好显示和导出excel, 忽略第一个敏感词
-                for (let i = 1; i < sensitiveWordList.length; i++) {
-                    let key = sensitiveWordList[i];
-                    console.log("key:", key)
-                    if (checkResponse[0]['flag'] === false) {
-                        console.log("设置checkResult[sensitiveWordList[i]] = ''")
-                        checkResult[key] = ''
-                    } else {
-                        console.log("checkResult[sensitiveWordList[i]] = checkResponse[0]['matches']", checkResponse[0], checkResponse[0][key].matches)
-                        // 去重一下
-                        checkResult[key] = unique(checkResponse[0][key].matches)
-                    }
-                }
-                console.log("checkResult:", checkResult)
-                // 保存到storage中
-                setNestedValue(newKeyValue, currentPageUrl + splitChar + requestUrl, checkResult, splitChar);
-                console.log("setNestedValue:", newKeyValue)
-                await chrome.storage.local.set({"key": newKeyValue});
-            }else{
-                // 没有命中的就不添加到缓存中了
+            // 检查是否存在关键字
+            if(sensitiveWordDetectionFlag){
+                await checkV2(tabId, requestInfo.url, body, sensitiveWordList, requestInfo.type);
             }
-        }
-    );
+
+            if(chineseAnnotationDetectionFlag){
+                await checkChineseAnnotation(tabId, requestInfo.url, body, requestInfo.type);
+            }
+            
+        });
 }
 
-// chrome.tabs.onUpdated.addListener(function(tabId, changeInfo){
-//     if(changeInfo.status==='complete'){
-//         console.log("chrome.tabs.onUpdated", changeInfo)
-//         currentPageUrl = changeInfo.url;
-//     }
-// })
+
 
 /**
- * 正则表达式来匹配敏感词
- * @param content
- * @param wordList
+ * 返回两个维度数据, 一个是以url返回,一个是以关键字返回
+ * {
+ *  url: [{'word':word,'hit': hit, 'result': result},{}],
+ *  words: {'word1':{'url': url, 'hit': hit, 'result': result}, 'word2':{}}'}
+ * }
+ * @param {*} content 
+ * @param {*} words 
  */
-function check (content, wordList) {
-    console.log("content: ", content, " wordList: ", wordList)
-    const matchResult = {}
-    let finalFlag = false
-    wordList.forEach((word, index) => {
-        if(index===0){
+async function checkV2(tabId, url, content, words, type){
+    const returnResult = {"url":[], "words":{}}
+    const pageUrl = await getTabUrl(tabId);
+    words.forEach((word, index) => {
+        let searchTerm = word ;
+        let regex = new RegExp(".{0,5}" + searchTerm + ".{0,5}", "ig");
+        let matches = content.match(regex);
+        // console.log("matches:", matches, "matches===null:", matches === null)
+        let flag = false;
+        if(matches === null){
+            matches = []
         }else{
-            let searchTerm = word ;
-            let regex = new RegExp(".{0,5}" + searchTerm + ".{0,5}", "ig");
-            let matches = content.match(regex);
-            console.log("matches:", matches, "matches===null:", matches === null)
-            let flag = false;
-            if(matches === null){
-                matches = []
+            if(matches.length===0){
+                flag = false;
             }else{
-                if(matches.length===0){
-                    finalFlag = false;
-                }else{
-                    finalFlag = true;
-                    flag = true;
-                }
+                flag = true;
             }
-            matchResult[word] =  {'matches': matches, 'flag': flag};
         }
+        returnResult["words"][word] = {'page': pageUrl, 'url': url, 'word': word,  'hit': flag, 'type': type,'result': matches };
+        returnResult["url"].push({'page': pageUrl, 'url': url, 'word':word,'hit': flag, 'type': type,'result': matches})
+        setFinnalResult(word, {'page': pageUrl, 'url': url, 'word': word,  'hit': flag, 'type': type,'result': matches });
     })
-    console.log("matchResult[word] =  {'matches': matches, 'flag': flag};", matchResult)
-    return [matchResult, finalFlag];
+    autoPort.postMessage({"action": "checkResult", "checkResult": returnResult});
 }
 
-async function getCurrentTab() {
-    let queryOptions = { active: true, lastFocusedWindow: true };
-    // `tab` will either be a `tabs.Tab` instance or `undefined`.
-    let [tab] = await chrome.tabs.query(queryOptions);
-    return tab;
+// 由于现在有一个react的频繁更新导致数据丢失的问题还不知道怎么解决,就先把结果存到本地,完成后统一在发送一次
+async function checkChineseAnnotation(tabId, url, content,type){
+    // (//.*?$(|/\*.*?\*/))* // 匹配注释
+    // console.log("checkChineseAnnotation start:", url)
+
+    let word = "Chinese Annotation Detection";
+    const pageUrl = await getTabUrl(tabId);
+    let regex = new RegExp("(/\\*[^\\*/]*\\*/)|(^//.*)", "ig");
+    let matches = content.match(regex);
+    // console.log("chineseAnnotationDetectionFlag:", matches);
+    const returnResult =  {"url":[], "words":{}};
+    const result = [];
+    let flag = false;
+    if(matches === null){
+
+    }else{
+        matches.forEach((item, index) => {
+            if(hasChinenese(item)){
+                flag = true;
+                result.push(item);
+            }
+        })
+        // console.log("chineseAnnotationDetection result:", result);
+        returnResult["words"][word] = {'page': pageUrl, 'url': url, 'word': word,  'hit': flag, 'type': type,'result': result };
+        returnResult["url"].push({'page': pageUrl, 'url': url, 'word':word,'hit': flag, 'type': type,'result': result})
+        autoPort.postMessage({"action": "checkResult", "checkResult": returnResult});
+        setFinnalResult(word, {'page': pageUrl, 'url': url, 'word': word,  'hit': flag, 'type': type,'result': result });
+        // chrome.storage.local.set({"checkResult": checkResult})
+        
+    }
+}
+
+function setFinnalResult(word, result) {
+    if(checkResult[word]===undefined){
+        checkResult[word] = [];
+    }
+    checkResult[word] = [...checkResult[word], result];
+    // chrome.storage.local.set({"checkResult": checkResult})
+}
+
+function hasChinenese(str) {
+    return /[\u4E00-\u9FA5]+/g.test(str); 
+}
+
+async function getTabUrl(id) {
+    const tab = await chrome.tabs.get(id);
+    return tab.url;
 }
 
 function unique (arr) {
     return Array.from(new Set(arr))
 }
+
+function parseLink() {
+    console.log("parseLink")
+}
+
+/**
+ * 这里是用于处理页面加载完成, 如果页面加载完成,我们可以进行截图,并且分析页面中的a标签,获取新的url
+ */
+let pageUrls = {}
+chrome.webRequest.onCompleted.addListener(
+    async function(details) {
+        if(autoRunFlag===false){
+            // 如果不是自动扫描,这里就不需要处理了
+        }else{
+            if(details.statusCode > 400 && details.tabId=== autoRunTab && details.type === 'main_frame' && isValidUrl(details.url) ){
+                // 当前url可能是错误的
+                autoPort.postMessage({"action": "checkResult", "checkResult": {"page": details.url, "url": details.url, "type": "Document", "hit": false, "result": "", "remark": "page load failed"}, "extra": "main_frame error"}, );
+                autoScanPathsDone.push(modifyUrl(details.url));
+                autoScanPathsDone = unique(autoScanPathsDone);
+                visitNextUrl();
+            }
+            if (details.type === 'main_frame' && details.tabId == autoRunTab && isValidUrl(details.url)) {
+                console.log('网页加载完成: ' + details.url);
+                
+                setTimeout(()=>{
+                    chrome.scripting.executeScript({
+                        target: {tabId: autoRunTab},
+                        function: () => {return document.documentElement.innerHTML;} 
+                        }, async (html) => {
+                            try{
+                                
+                                // 如果不符合host的,就不在收集这个页面的url
+                                details.url = modifyUrl(details.url);
+                                    // 页面加载完成后截图格式为base64
+                                    await captureTabScreenshot(autoRunTab, details.url);
+                                if(isHost(details.url, taskHost)){
+                                    const aList = html[0].result.match(/<a.*?href="(.*?)".*?>(.*?)<\/a>/ig);
+                                    // 讲当前页面的所有a标签的href提取出来,并且去重
+                                    const hrefList = aList.map((item) => {
+                                        return item.match(/href="(.*?)"/)[1];
+                                    })
+                                    // 这里还需要处理一下,如果不是有效的url,则需要剔除, 并且需要处理一下末位的/ ,防止 123/ 和123不相等的的情况
+                                    // 需要去除一些特殊的链接, 比如说https://accounts.commex.com/en/login?return_to=aHR0cHM6Ly93d3cuY29tbWV4LmNvbS9lbi9mdXR1cmVzLWluZm8vZnVuZGluZy1oaXN0b3J5LzA%253D
+                                    // 因为这个return_to后面的是会实时变化,每次页面刷新都会变化,导致任务url会不断增加,所以需要去除这种url
+                                    // TODO 
+                                    // 还需要处理一些只请求一次的url, 比如trade/BTC_USDT 和trade/BTC_ETH 这种,这个可以前端给一个配置项,用于正则表达式匹配,只执行一次的page
+                                    
+                                    const dealedUrlList = modifyUrlList(filterNotValidUrl(hrefList))
+                                    // console.log("ddebug:", dealedUrlList)
+                                    autoScanPaths = autoScanPaths.concat(dealedUrlList);
+                                    autoScanPaths = unique(autoScanPaths);
+                                    console.log("details.url", details.url)
+                                    pageUrls[details.url] = filterNotValidUrl(dealedUrlList);
+                                }else{
+                                    console.log("不是当前host的url,不做处理", details.url, taskHost)
+                                }
+                                // 不符合的和复合host的至少都要走一遍
+                                autoScanPathsDone.push(modifyUrl(details.url));
+                                autoScanPathsDone = unique(autoScanPathsDone);
+
+                                // 去除特定的href
+                                // console.log("pageUrls:", pageUrls)
+                                // autoScanPaths = ["http://VIP@commex.com"]
+                                visitNextUrl();
+                            }catch(error)  {
+                                console.log("error:", error)
+                                if (lastUrlError[details.url] === undefined) {
+                                    lastUrlError[details.url] = 1;
+                                } else {
+                                    lastUrlError[details.url] += 1;
+                                    if(lastUrlError[details.url]>=3){
+                                        autoScanPathsDone.push(modifyUrl(details.url));
+                                        autoScanPathsDone = unique(autoScanPathsDone);
+                                        // autoPort.postMessage({"error": `${details.url} error, please check it manually.`});
+                                        autoPort.postMessage({"action": "checkResult", "checkResult": {"page": details.url, "url": details.url, "type": "Document", "hit": false, "result": "", "remark": "page load failed"}, "extra": "main_frame error"}, );
+
+                                        // 将结果推送到内容脚本
+                                        visitNextUrl();
+                                    }else{
+                                        chrome.tabs.update( autoRunTab, {url: details.url}, function (tab) {});
+                                    }
+                                }
+                            }
+                        }
+                    );
+                }, 3000);
+            }
+        }
+
+    },
+    {urls: ['<all_urls>']}
+);
+
+function visitNextUrl() {
+    if(autoRunFlag===false){
+        if(autoPort){
+            autoPort.postMessage({"error": "auto run is stopped."})
+        }
+        return;
+    }
+    if(autoPort){
+        autoPort.postMessage({"action": "process", "done": autoScanPathsDone.length, "total": autoScanPaths.length})
+    }
+    // 比较autoScanPathsDone和autoScanPaths,比较俩个list的差异,取出差异的第一个url,然后跳转到这个url
+    let difference = autoScanPaths.filter(x => !autoScanPathsDone.includes(x));
+    let nextUrl = difference.shift();
+    while(true){
+        if(nextUrl===undefined&&difference.length===0){
+            setTimeout(()=>{
+                autoPort.postMessage({"action": "finish", "pageUrls": pageUrls, "screenShot": pageScreenShot })
+                // 
+                console.log("finnal result localhost:", checkResult)
+                autoPort.postMessage({"action": "finalResult","finalResult": checkResult});
+                console.log("autoScanPaths:", autoScanPaths, "autoScanPathsDone:", autoScanPathsDone);
+                autoRunFlag = false;
+                // 目标页 alert告诉用户结束了
+                chrome.scripting.executeScript({target: {tabId: autoRunTab}, function: () => {alert("auto scan finished!")}}, ()=>{});
+            },timeout);
+            break;
+        }else if(!isHost(nextUrl, taskHost)){
+            autoScanPathsDone.push(modifyUrl(nextUrl));
+            autoScanPathsDone = unique(autoScanPathsDone);
+            // 这里需要更新process,不然处理完了,进度条还是不是100%
+            autoPort.postMessage({"action": "process", "done": autoScanPathsDone.length, "total": autoScanPaths.length})
+            nextUrl = difference.shift();
+        }else{
+            console.log("nextUrl", nextUrl)
+            setTimeout(()=>{chrome.tabs.update( autoRunTab, {url: nextUrl}, function (tab) {
+                // console.log("update tab", tab)
+                autoScanPaths = autoScanPaths.map((item) => {
+                    if(item===modifyUrl(tab.pendingUrl)){
+                        return modifyUrl(tab.url);
+                    }else{
+                        return item;
+                    }
+                })
+            })}, 3000);
+            break;
+        }
+    }
+}
+
+function initAutoRun(taskInfo) {
+    const {words, path, host, auto, screenShotFlag, duplicatePage, ignoreUrl, tasks} = taskInfo;
+    console.log("initAutoRun:", taskInfo)
+    taskScreenShotFlag = screenShotFlag;
+    taskDuplicatePage = duplicatePage;
+    taskIgnoreUrl = ignoreUrl;
+    taskHost = host;
+    redirectUrlMap = {};
+    autoRunTab = "";
+    autoRunFlag = auto;
+    autoScanPaths = [];
+    autoScanPathsDone = [];
+    checkResult = {};
+    pendingRequests = {};
+    sensitiveWordList = words;
+    if(tasks.includes("Words_Check")){
+        sensitiveWordDetectionFlag = true;
+    }
+    if(tasks.includes("Chinese_Annotation_Detection")){
+        console.log("init Chinese_Annotation_Detection")
+        chineseAnnotationDetectionFlag = true;
+    }
+    if(tasks==[]){
+        autoPort.postMessage({"action": "initError", "error": "please select at least one task."})
+        return false;
+    }
+    return true;
+}
+
+function afterStop() {
+    sensitiveWordDetectionFlag = false;
+    chineseAnnotationDetectionFlag = false;
+}
+
+function filterNotValidUrl(arr) {
+    return arr.filter((item) => {
+        return isValidUrl(item);
+    })
+}
+
+function getUrlWithoutParams(url) {
+    let urlObj = new URL(url);
+    return urlObj.origin + urlObj.pathname;
+}
+
+function isHost(url, host) {
+    if(host==""){
+        return true;
+    }else{
+        console.log("getHost", getHost(url))
+        return getHost(url).indexOf(host) !== -1;
+    }
+}
+
+function getHost(url) {
+    let urlObj = new URL(url);
+    return urlObj.host;
+}
+
+// 
+function modifyUrlList(arr) {
+    return arr.map((str) => {
+        return modifyUrl(str);
+    })
+}
+
+function modifyUrl(str) {
+    let dealStr = getUrlWithoutParams(str);
+    if (dealStr[dealStr.length - 1] === '/') {
+        // 这里需要去除末尾的/
+        return dealStr.substring(0, dealStr.length - 1);
+    } else {
+        return dealStr;
+    }
+
+}
+
+async function captureTabScreenshot(tabId, url) {
+    if(taskScreenShotFlag===false){
+        return;
+    }
+    // 首先激活标签页
+    await chrome.tabs.update(tabId, {active: true}, async function() {
+        // 然后截取屏幕截图
+        try{
+            await chrome.tabs.captureVisibleTab(null, {format: 'png'}, function(dataUrl) {
+                console.log("captureTabScreenshot:", dataUrl)
+                pageScreenShot[url] = dataUrl;
+            });
+        }catch(e){
+            console.log("captureTabScreenshot error:", e)
+        }
+    });
+}
+
+
+
+
+

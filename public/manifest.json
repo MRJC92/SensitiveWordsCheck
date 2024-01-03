@@ -19,11 +19,13 @@
     "contextMenus",
     "cookies",
     "tabs",
+    "activeTab",
     "notifications",
     "webRequest",
     "storage",
     "scripting",
-    "debugger"
+    "debugger",
+    "webNavigation"
   ],
   "host_permissions": ["<all_urls>"],
   "web_accessible_resources": [
